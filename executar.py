@@ -77,10 +77,10 @@ def create_waveform_image(file_path):
 def predict_audio(file_path):
     try:
         spectrogram = audio_to_spectrogram(file_path)
-        model = tf.keras.models.load_model('modelo_sirene.h5')
+        model = tf.keras.models.load_model('modelos/modelo_sirene_v1.0.1.h5')
         prediction = model.predict(spectrogram)
         print(f'Predição bruta: {prediction}')  # Adicionado para depuração
-        classes = ['ambulance', 'firetruck', 'traffic']
+        classes = ['ambulance', 'construction', 'dog', 'firetruck', 'traffic']
         predicted_class = classes[np.argmax(prediction)]
         return predicted_class
     except Exception as e:
