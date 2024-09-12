@@ -54,6 +54,25 @@ def create_spectrogram_image(file_path):
     image = Image.open(buf)
     return ImageTk.PhotoImage(image)
 
+# Função para criar e salvar a imagem da forma de onda do áudio
+def create_waveform_image(file_path):
+    y, sr = librosa.load(file_path, sr=None)
+    plt.figure(figsize=(6, 2))
+    plt.plot(np.linspace(0, len(y) / sr, num=len(y)), y)
+    plt.title('Forma de Onda do Áudio')
+    plt.xlabel('Tempo (s)')
+    plt.ylabel('Amplitude')
+    plt.grid()
+    
+    # Salvar a imagem em um objeto BytesIO
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
+    plt.close()
+    
+    buf.seek(0)
+    image = Image.open(buf)
+    return ImageTk.PhotoImage(image)
+
 # Função para fazer previsões com o modelo carregado
 def predict_audio(file_path):
     try:
@@ -77,10 +96,18 @@ def open_file():
             result = predict_audio(file_path)
             if result:
                 result_label.config(text=f'Classificação: {result}')
-                img = create_spectrogram_image(file_path)
-                if img:
-                    spectrogram_label.config(image=img)
-                    spectrogram_label.image = img  # Mantenha uma referência da imagem
+                
+                # Criar e exibir a imagem do espectrograma
+                spectrogram_img = create_spectrogram_image(file_path)
+                if spectrogram_img:
+                    spectrogram_label.config(image=spectrogram_img)
+                    spectrogram_label.image = spectrogram_img  # Mantenha uma referência da imagem
+                
+                # Criar e exibir a imagem da forma de onda
+                waveform_img = create_waveform_image(file_path)
+                if waveform_img:
+                    waveform_label.config(image=waveform_img)
+                    waveform_label.image = waveform_img  # Mantenha uma referência da imagem
             else:
                 result_label.config(text='Erro ao fazer a previsão.')
     except Exception as e:
@@ -89,7 +116,7 @@ def open_file():
 
 # Função principal para criar e exibir a interface Tkinter
 def main():
-    global result_label, spectrogram_label
+    global result_label, spectrogram_label, waveform_label
     
     root = tk.Tk()
     root.title("Reconhecimento de Ruído")
@@ -102,6 +129,9 @@ def main():
     
     spectrogram_label = tk.Label(root)
     spectrogram_label.pack(pady=20)
+    
+    waveform_label = tk.Label(root)
+    waveform_label.pack(pady=20)
     
     root.mainloop()
 
