@@ -4,16 +4,18 @@ import librosa
 import matplotlib.pyplot as plt
 from sklearn.model_selection import StratifiedKFold
 from tensorflow.keras import layers, models
-from tensorflow.keras.callbacks import EarlyStopping
-import tensorflow as tf
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
 
-# Ativar o uso de GPU, se disponível
-physical_devices = tf.config.list_physical_devices('GPU')
-if physical_devices:
-    tf.config.experimental.set_memory_growth(physical_devices[0], True)
-    print("Treinamento utilizando GPU.")
-else:
-    print("GPU não detectada. Treinamento será feito com CPU.")
+# Função para aplicar aumentos no áudio
+def augment_audio(y, sr):
+    # Alteração de pitch
+    y_pitch = librosa.effects.pitch_shift(y, sr=sr, n_steps=2)
+    # Alteração de tempo (speed up/down)
+    y_speed = librosa.effects.time_stretch(y, rate=1.2)
+    # Adicionar ruído
+    noise = np.random.randn(len(y))
+    y_noisy = y + 0.005 * noise
+    return y_pitch, y_speed, y_noisy
 
 # Função para padronizar o comprimento dos espectrogramas
 def pad_spectrogram(spectrogram, max_length):
@@ -31,7 +33,7 @@ def normalize_spectrogram(spectrogram):
 def load_data(data_dir, max_length=128):
     labels = []
     features = []
-    label_map = {'ambulance': 0, 'construction': 1, 'dog': 2, 'firetruck': 3, 'traffic': 4}
+    label_map = {'ambulance': 0, 'dog': 1, 'firetruck': 2, 'traffic': 3}
     
     for category in os.listdir(data_dir):
         category_dir = os.path.join(data_dir, category)
@@ -39,16 +41,21 @@ def load_data(data_dir, max_length=128):
             for audio_file in os.listdir(category_dir):
                 file_path = os.path.join(category_dir, audio_file)
                 y, sr = librosa.load(file_path, sr=None)
-                spectrogram = librosa.feature.melspectrogram(y=y, sr=sr)
                 
-                # Normalizar o espectrograma
-                spectrogram = normalize_spectrogram(spectrogram)
+                # Aplicar aumentos
+                y_pitch, y_speed, y_noisy = augment_audio(y, sr)
                 
-                # Padronizar o tamanho do espectrograma
-                spectrogram = pad_spectrogram(spectrogram, max_length)
-                
-                features.append(spectrogram)
-                labels.append(label_map[category])
+                for audio in [y, y_pitch, y_speed, y_noisy]:
+                    spectrogram = librosa.feature.melspectrogram(y=audio, sr=sr)
+                    
+                    # Normalizar o espectrograma
+                    spectrogram = normalize_spectrogram(spectrogram)
+                    
+                    # Padronizar o tamanho do espectrograma
+                    spectrogram = pad_spectrogram(spectrogram, max_length)
+                    
+                    features.append(spectrogram)
+                    labels.append(label_map[category])
     
     # Convertendo listas para arrays
     features = np.array(features)
@@ -71,17 +78,19 @@ def create_cnn_model(input_shape):
         layers.Flatten(),
         layers.Dropout(0.5),  # Adiciona dropout para evitar overfitting
         layers.Dense(128, activation='relu', kernel_regularizer='l2'),
-        layers.Dense(5, activation='softmax')  # Ajustado para 5 classes
+        layers.Dense(4, activation='softmax')  # Ajustar para 4 classes
     ])
-    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    model.compile(
+        optimizer='adam',
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
     return model
 
 # Função para treinar o modelo usando validação cruzada
 def train_model_with_cross_validation(features, labels):
     skf = StratifiedKFold(n_splits=3)
     fold_no = 1
-    accuracies = []
-    val_accuracies = []
     
     for train_idx, val_idx in skf.split(features, labels):
         print(f'Treinando o Fold {fold_no}...')
@@ -89,38 +98,31 @@ def train_model_with_cross_validation(features, labels):
         train_y, val_y = labels[train_idx], labels[val_idx]
 
         model = create_cnn_model(input_shape=(features.shape[1], features.shape[2], 1))
+        
+        # Callbacks
+        callbacks = [
+            EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True),
+            ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3),
+            ModelCheckpoint(f'model_fold_{fold_no}.h5', save_best_only=True, save_weights_only=True)
+        ]
+        
+        history = model.fit(train_X, train_y, epochs=15, batch_size=32, validation_data=(val_X, val_y), callbacks=callbacks)
 
-        # Early stopping para evitar overfitting
-        early_stopping = EarlyStopping(monitor='val_loss', patience=3)
-
-        history = model.fit(train_X, train_y, epochs=15, batch_size=32, 
-                            validation_data=(val_X, val_y), callbacks=[early_stopping])
-
-        # Salvar acurácias para análise geral ao final
-        accuracies.append(history.history['accuracy'])
-        val_accuracies.append(history.history['val_accuracy'])
+        # Gráfico de desempenho por fold
+        plt.figure()
+        plt.plot(history.history['accuracy'], label='Acurácia de Treinamento')
+        plt.plot(history.history['val_accuracy'], label='Acurácia de Validação')
+        plt.title(f'Fold {fold_no} - Acurácia')
+        plt.xlabel('Épocas')
+        plt.ylabel('Acurácia')
+        plt.legend()
+        plt.show()
         
         fold_no += 1
 
-    # Gráfico geral de desempenho
-    plt.figure(figsize=(10, 6))
-    for i in range(len(accuracies)):
-        plt.plot(accuracies[i], label=f'Fold {i+1} - Acurácia de Treinamento')
-        plt.plot(val_accuracies[i], label=f'Fold {i+1} - Acurácia de Validação')
-    
-    plt.title('Acurácia de Treinamento e Validação para todos os Folds')
-    plt.xlabel('Épocas')
-    plt.ylabel('Acurácia')
-    plt.legend()
-    plt.show()
-
-    # Criar diretório para salvar o modelo, se não existir
-    if not os.path.exists('modelos'):
-        os.makedirs('modelos')
-    
-    # Salvar o modelo treinado no diretório 'modelos/'
-    model.save('modelos/modelo_sirene_v1.0.1.h5')
-    print("Modelo salvo como 'modelos/modelo_sirene_v1.0.1.h5'.")
+    # Salvar o modelo final
+    model.save('modelo_final.h5')
+    print("Modelo salvo como 'modelo_final.h5'.")
 
 # Executando o treinamento
 features, labels = load_data('dataset')
