@@ -9,22 +9,28 @@ from PIL import Image, ImageTk
 import io
 
 # Função para carregar e processar o arquivo de áudio
-def audio_to_spectrogram(file_path, max_length=128):
+def audio_to_spectrogram(file_path, target_shape=(128, 128)):
     y, sr = librosa.load(file_path, sr=None)
     spectrogram = librosa.feature.melspectrogram(y=y, sr=sr)
     
-    # Padronizar o comprimento do espectrograma
-    if spectrogram.shape[1] > max_length:
-        spectrogram = spectrogram[:, :max_length]
+    # Normalizar o espectrograma
+    spectrogram = (spectrogram - np.mean(spectrogram)) / np.std(spectrogram)
+    
+    # Redimensionar para o formato esperado
+    if spectrogram.shape[0] > target_shape[0]:
+        spectrogram = spectrogram[:target_shape[0], :]
     else:
-        padding = max_length - spectrogram.shape[1]
+        padding = target_shape[0] - spectrogram.shape[0]
+        spectrogram = np.pad(spectrogram, ((0, padding), (0, 0)), mode='constant')
+    
+    if spectrogram.shape[1] > target_shape[1]:
+        spectrogram = spectrogram[:, :target_shape[1]]
+    else:
+        padding = target_shape[1] - spectrogram.shape[1]
         spectrogram = np.pad(spectrogram, ((0, 0), (0, padding)), mode='constant')
     
     # Adicionar dimensão para o canal
     spectrogram = spectrogram[np.newaxis, ..., np.newaxis]
-    
-    # Normalizar o espectrograma
-    spectrogram = (spectrogram - np.mean(spectrogram)) / np.std(spectrogram)
     
     return spectrogram
 
@@ -76,11 +82,17 @@ def create_waveform_image(file_path):
 # Função para fazer previsões com o modelo carregado
 def predict_audio(file_path):
     try:
-        spectrogram = audio_to_spectrogram(file_path)
-        model = tf.keras.models.load_model('modelo_sirene.h5')
+        # Carregar o modelo e obter a forma de entrada esperada
+        model = tf.keras.models.load_model('modelos/modelo_final.h5')
+        input_shape = model.input_shape[1:3]
+        print(f"Forma de entrada esperada: {input_shape}")
+        
+        # Processar o áudio e ajustar o formato
+        spectrogram = audio_to_spectrogram(file_path, target_shape=input_shape)
+        
         prediction = model.predict(spectrogram)
         print(f'Predição bruta: {prediction}')  # Adicionado para depuração
-        classes = ['ambulance', 'firetruck', 'traffic']
+        classes = ['ambulance', 'dog', 'firetruck', 'traffic']
         predicted_class = classes[np.argmax(prediction)]
         return predicted_class
     except Exception as e:
